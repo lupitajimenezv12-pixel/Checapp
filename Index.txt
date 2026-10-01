@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1F3A5F">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Checapp</title>
+<style>
+:root{--azul:#1F3A5F;--verde:#1D9E75;--sub:#5B6675;--linea:#D5DAE1;--gris:#F7F8FA}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--gris);color:var(--azul)}
+header{background:var(--azul);color:#fff;padding:14px 16px;padding-top:calc(14px + env(safe-area-inset-top,0px));display:flex;justify-content:space-between;align-items:center;font-weight:500;font-size:17px}
+header button{background:none;border:0;color:#fff;font-size:14px;cursor:pointer}
+main{max-width:420px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:20px;font-weight:500;margin:0 0 4px}
+p{margin:0 0 12px;color:var(--sub);font-size:14px}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tabs button{flex:1;padding:10px;border:1px solid var(--linea);background:#fff;color:var(--azul);border-radius:10px;font-size:14px;cursor:pointer}
+.tabs button.on{background:var(--azul);color:#fff;border-color:var(--azul)}
+label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
+input[type=email],input[type=password],input[type=text]{width:100%;padding:12px;border:1px solid var(--linea);border-radius:10px;font-size:16px;background:#fff;color:var(--azul)}
+.btn,.reg{width:100%;border:0;border-radius:14px;color:#fff;font-weight:500;cursor:pointer}
+.btn{margin-top:18px;padding:14px;background:var(--verde);font-size:16px}
+.reg{padding:22px 0;font-size:18px;background:var(--verde)}
+.reg.salida{background:var(--azul)}
+button:disabled{opacity:.6;cursor:default}
+#msg{margin-top:14px;padding:10px 12px;border-radius:10px;font-size:14px}
+#msg.ok{background:#E1F5EE;color:#085041}
+#msg.err{background:#FCEBEB;color:#791F1F}
+.centro{text-align:center}
+#reloj{font-size:44px;font-weight:500;line-height:1.1;margin:8px 0 2px}
+#fecha{margin-bottom:20px}
+ul{list-style:none;margin:8px 0 0;padding:0;background:#fff;border:1px solid var(--linea);border-radius:12px}
+li{display:flex;justify-content:space-between;padding:11px 14px;font-size:14px;border-top:1px solid var(--linea)}
+li:first-child{border-top:0}
+.tarde{background:#FAEEDA;color:#633806;border-radius:8px;padding:1px 8px;font-size:12px;font-weight:500}
+h2{font-size:15px;font-weight:500;margin:26px 0 0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><span>Checapp</span><button id="salir" hidden>Salir</button></header>
+<main>
+
+<section id="auth" hidden>
+  <h1>Bienvenida a Checapp</h1>
+  <p>Control de asistencia fácil para tu negocio.</p>
+  <div class="tabs">
+    <button id="tabE" class="on" type="button">Entrar</button>
+    <button id="tabC" type="button">Crear mi empresa</button>
+  </div>
+  <form id="formAuth">
+    <div id="extra" hidden>
+      <label for="empresa">Nombre de tu empresa</label>
+      <input id="empresa" type="text" autocomplete="organization">
+      <label for="nombre">Tu nombre</label>
+      <input id="nombre" type="text" autocomplete="name">
+    </div>
+    <label for="email">Correo</label>
+    <input id="email" type="email" autocomplete="email" required>
+    <label for="pass">Contraseña (mínimo 6 caracteres)</label>
+    <input id="pass" type="password" autocomplete="current-password" minlength="6" required>
+    <button id="btnAuth" class="btn" type="submit">Entrar</button>
+  </form>
+</section>
+
+<section id="home" class="centro" hidden>
+  <h1 id="hola"></h1>
+  <p id="emp"></p>
+  <div id="reloj">--:--</div>
+  <p id="fecha"></p>
+  <button id="btnReg" class="reg" type="button">Registrar entrada</button>
+  <input id="foto" type="file" accept="image/*" capture="user" hidden>
+  <p style="margin-top:10px;font-size:12px">Se tomará una foto y se guardará tu ubicación.</p>
+  <h2 style="text-align:left">Registros de hoy</h2>
+  <ul id="lista"></ul>
+</section>
+
+<div id="msg" hidden></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL='https://gfcoohjuoowlvsnqqtvt.supabase.co';
+const SUPABASE_KEY='sb_publishable_Lv-yg5tUvKYiDlSr4c6Bpg_58tz6YJv';
+const SB=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const $=id=>document.getElementById(id);
+let perfil=null,modo='entrar',tipoSig='entrada';
+
+function msg(t,ok){const m=$('msg');m.textContent=t||'';m.className=ok?'ok':'err';m.hidden=!t}
+function traducir(t){
+  if(/Invalid login/i.test(t))return 'Correo o contraseña incorrectos';
+  if(/already registered/i.test(t))return 'Ese correo ya tiene una cuenta';
+  if(/at least/i.test(t))return 'La contraseña debe tener al menos 6 caracteres';
+  if(/rate limit/i.test(t))return 'Demasiados intentos, espera un momento';
+  return t;
+}
+function mostrar(v){$('auth').hidden=v!=='auth';$('home').hidden=v!=='home';$('salir').hidden=v!=='home'}
+function hora(f){return new Date(f).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}
+
+function setModo(m){
+  modo=m;
+  $('tabE').classList.toggle('on',m==='entrar');
+  $('tabC').classList.toggle('on',m==='crear');
+  $('extra').hidden=m!=='crear';
+  $('btnAuth').textContent=m==='entrar'?'Entrar':'Crear mi empresa';
+  msg('');
+}
+$('tabE').onclick=()=>setModo('entrar');
+$('tabC').onclick=()=>setModo('crear');
+
+$('formAuth').onsubmit=async e=>{
+  e.preventDefault();msg('');
+  const email=$('email').value.trim(),pass=$('pass').value;
+  $('btnAuth').disabled=true;
+  try{
+    if(modo==='entrar'){
+      const {error}=await SB.auth.signInWithPassword({email,password:pass});
+      if(error)throw error;
+    }else{
+      const emp=$('empresa').value.trim(),nom=$('nombre').value.trim();
+      if(!emp||!nom)throw new Error('Escribe el nombre de tu empresa y tu nombre');
+      const {data,error}=await SB.auth.signUp({email,password:pass});
+      if(error)throw error;
+      if(!data.session)throw new Error('Confirma tu correo y luego toca Entrar');
+      const r=await SB.rpc('crear_empresa',{p_empresa:emp,p_nombre:nom});
+      if(r.error)throw r.error;
+    }
+    await iniciar();
+  }catch(err){msg(traducir(err.message))}
+  $('btnAuth').disabled=false;
+};
+
+async function iniciar(){
+  const {data:{session}}=await SB.auth.getSession();
+  if(!session){mostrar('auth');return}
+  const {data,error}=await SB.from('perfiles').select('id,nombre,rol,empresa_id,empresas(nombre)').eq('id',session.user.id).maybeSingle();
+  if(error||!data){mostrar('auth');msg('Tu cuenta aún no tiene una empresa asignada');return}
+  perfil=data;
+  $('hola').textContent='Hola, '+data.nombre.split(' ')[0];
+  $('emp').textContent=data.empresas.nombre;
+  msg('');mostrar('home');
+  await refrescar();
+}
+
+async function refrescar(){
+  const ini=new Date();ini.setHours(0,0,0,0);
+  const {data}=await SB.from('registros').select('tipo,fecha_hora,es_retardo').eq('empleado_id',perfil.id).gte('fecha_hora',ini.toISOString()).order('fecha_hora',{ascending:false});
+  const l=data||[];
+  tipoSig=(!l.length||l[0].tipo==='salida')?'entrada':'salida';
+  $('btnReg').textContent=tipoSig==='entrada'?'Registrar entrada':'Registrar salida';
+  $('btnReg').className='reg '+tipoSig;
+  $('lista').innerHTML=l.length
+    ?l.map(r=>'<li><span>'+(r.tipo==='entrada'?'Entrada':'Salida')+'</span><span>'+hora(r.fecha_hora)+(r.es_retardo?' <b class="tarde">Retardo</b>':'')+'</span></li>').join('')
+    :'<li><span>Aún no hay registros hoy</span></li>';
+}
+
+function ubicacion(){
+  return new Promise(ok=>{
+    if(!navigator.geolocation)return ok(null);
+    navigator.geolocation.getCurrentPosition(p=>ok(p.coords),()=>ok(null),{enableHighAccuracy:true,timeout:10000});
+  });
+}
+function comprimir(f){
+  return new Promise((ok,no)=>{
+    const i=new Image();
+    i.onload=()=>{
+      const s=Math.min(1,800/Math.max(i.width,i.height));
+      const c=document.createElement('canvas');
+      c.width=Math.round(i.width*s);c.height=Math.round(i.height*s);
+      c.getContext('2d').drawImage(i,0,0,c.width,c.height);
+      c.toBlob(b=>b?ok(b):no(new Error('Foto inválida')),'image/jpeg',0.7);
+    };
+    i.onerror=()=>no(new Error('Foto inválida'));
+    i.src=URL.createObjectURL(f);
+  });
+}
+
+$('btnReg').onclick=()=>$('foto').click();
+$('foto').onchange=async ev=>{
+  const f=ev.target.files[0];ev.target.value='';
+  if(!f)return;
+  const b=$('btnReg');b.disabled=true;msg('Registrando…',true);
+  try{
+    const pos=await ubicacion();
+    const blob=await comprimir(f);
+    const ruta=perfil.empresa_id+'/'+perfil.id+'/'+Date.now()+'.jpg';
+    const up=await SB.storage.from('fotos').upload(ruta,blob,{contentType:'image/jpeg'});
+    if(up.error)throw up.error;
+    const {data,error}=await SB.from('registros').insert({
+      empresa_id:perfil.empresa_id,empleado_id:perfil.id,tipo:tipoSig,
+      lat:pos?pos.latitude:null,lng:pos?pos.longitude:null,foto_path:ruta
+    }).select('es_retardo').single();
+    if(error)throw error;
+    msg((tipoSig==='entrada'?'Entrada':'Salida')+' registrada'+(data.es_retardo?' (con retardo)':'')+(pos?'':'. No se pudo obtener tu ubicación'),true);
+    await refrescar();
+  }catch(err){msg('No se pudo registrar: '+err.message)}
+  b.disabled=false;
+};
+
+$('salir').onclick=async()=>{await SB.auth.signOut();perfil=null;mostrar('auth')};
+
+function reloj(){
+  const d=new Date();
+  $('reloj').textContent=d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+  $('fecha').textContent=d.toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'});
+}
+reloj();setInterval(reloj,15000);
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+iniciar();
+</script>
+</body>
+</html>
