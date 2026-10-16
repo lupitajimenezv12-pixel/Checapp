@@ -37,6 +37,19 @@ li{display:flex;justify-content:space-between;padding:11px 14px;font-size:14px;b
 li:first-child{border-top:0}
 .tarde{background:#FAEEDA;color:#633806;border-radius:8px;padding:1px 8px;font-size:12px;font-weight:500}
 h2{font-size:15px;font-weight:500;margin:26px 0 0}
+main{padding-bottom:90px}
+input[type=time],input[type=number]{width:100%;padding:12px;border:1px solid var(--linea);border-radius:10px;font-size:16px;background:#fff;color:var(--azul)}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0}
+.c{border-radius:10px;padding:10px 4px;text-align:center;font-size:12px}
+.c b{display:block;font-size:22px;font-weight:500}
+.c.v{background:#E1F5EE;color:#085041}.c.a{background:#FAEEDA;color:#633806}.c.r{background:#FCEBEB;color:#791F1F}
+.pill{border-radius:8px;padding:2px 10px;font-size:12px;white-space:nowrap}
+.pill.v{background:#E1F5EE;color:#085041}.pill.a{background:#FAEEDA;color:#633806}.pill.r{background:#FCEBEB;color:#791F1F}.pill.g{background:#EEF0F3;color:var(--sub)}
+li small{color:var(--sub)}
+.lnk,li a{background:none;border:0;padding:0;font-size:12px;color:#185FA5;text-decoration:underline;cursor:pointer}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#fff;border-top:1px solid var(--linea);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;padding:14px 0;border:0;background:none;font-size:14px;color:var(--sub);cursor:pointer}
+nav button.on{color:var(--azul);font-weight:500}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -78,8 +91,35 @@ h2{font-size:15px;font-weight:500;margin:26px 0 0}
   <ul id="lista"></ul>
 </section>
 
+<section id="hoy" hidden>
+  <h1>Hoy en tu negocio</h1>
+  <p id="fechaHoy"></p>
+  <div id="cards" class="cards"></div>
+  <ul id="listaHoy"></ul>
+  <button id="recarga" class="btn" type="button">Actualizar</button>
+</section>
+
+<section id="equipo" hidden>
+  <h1>Tu equipo</h1>
+  <ul id="listaEq"></ul>
+  <h2>Agregar empleado</h2>
+  <form id="formEq">
+    <label>Nombre<input id="eNom" type="text" required></label>
+    <label>Correo del empleado<input id="eEmail" type="email" required></label>
+    <label>Contraseña (mínimo 6 caracteres)<input id="ePass" type="text" minlength="6" required></label>
+    <label>Hora de entrada<input id="eHora" type="time" value="08:00" required></label>
+    <label>Minutos de tolerancia<input id="eTol" type="number" value="10" min="0" max="60" inputmode="numeric"></label>
+    <button id="btnEq" class="btn" type="submit">Agregar empleado</button>
+  </form>
+</section>
+
 <div id="msg" hidden></div>
 </main>
+<nav id="nav" hidden>
+  <button data-v="home" class="on">Registro</button>
+  <button data-v="hoy">Hoy</button>
+  <button data-v="equipo">Equipo</button>
+</nav>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -97,7 +137,15 @@ function traducir(t){
   if(/rate limit/i.test(t))return 'Demasiados intentos, espera un momento';
   return t;
 }
-function mostrar(v){$('auth').hidden=v!=='auth';$('home').hidden=v!=='home';$('salir').hidden=v!=='home'}
+function mostrar(v){
+  ['auth','home','hoy','equipo'].forEach(s=>$(s).hidden=s!==v);
+  $('salir').hidden=v==='auth';
+  $('nav').hidden=v==='auth'||!(perfil&&perfil.rol==='dueno');
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  if(v==='hoy')cargarHoy();
+  if(v==='equipo')cargarEquipo();
+}
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function hora(f){return new Date(f).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}
 
 function setModo(m){
@@ -200,7 +248,68 @@ $('foto').onchange=async ev=>{
   b.disabled=false;
 };
 
-$('salir').onclick=async()=>{await SB.auth.signOut();perfil=null;mostrar('auth')};
+$('salir').onclick=async()=>{await SB.auth.signOut();perfil=null;msg('');mostrar('auth')};
+
+/* ---------- Panel del dueño ---------- */
+// Segundo cliente solo para crear cuentas de empleados sin cerrar tu sesión
+const SB2=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false,storageKey:'checapp-alta'}});
+
+async function cargarHoy(){
+  const ini=new Date();ini.setHours(0,0,0,0);
+  $('fechaHoy').textContent=new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'});
+  const [p,r]=await Promise.all([
+    SB.from('perfiles').select('id,nombre,hora_entrada,tolerancia_min').eq('activo',true).order('nombre'),
+    SB.from('registros').select('empleado_id,tipo,fecha_hora,es_retardo,lat,lng,foto_path').gte('fecha_hora',ini.toISOString()).order('fecha_hora')
+  ]);
+  const regs=r.data||[],ahora=new Date(),min=ahora.getHours()*60+ahora.getMinutes();
+  let pres=0,ret=0,fal=0;
+  const filas=(p.data||[]).map(u=>{
+    const e=regs.find(x=>x.empleado_id===u.id&&x.tipo==='entrada');
+    const hm=u.hora_entrada.split(':');
+    let cls,txt,det='—';
+    if(e){
+      pres++;
+      if(e.es_retardo){ret++;cls='a';txt='Retardo'}else{cls='v';txt='A tiempo'}
+      det=hora(e.fecha_hora)
+        +(e.foto_path?' · <button class="lnk" data-foto="'+esc(e.foto_path)+'">Foto</button>':'')
+        +(e.lat!=null?' · <a href="https://maps.google.com/?q='+e.lat+','+e.lng+'" target="_blank" rel="noopener">Mapa</a>':'');
+    }else if(min>(+hm[0])*60+(+hm[1])+u.tolerancia_min){fal++;cls='r';txt='Sin registro'}
+    else{cls='g';txt='Pendiente'}
+    return '<li><span>'+esc(u.nombre)+'<br><small>'+det+'</small></span><span class="pill '+cls+'">'+txt+'</span></li>';
+  });
+  $('cards').innerHTML='<div class="c v"><b>'+pres+'</b>Presentes</div><div class="c a"><b>'+ret+'</b>Retardos</div><div class="c r"><b>'+fal+'</b>Sin registro</div>';
+  $('listaHoy').innerHTML=filas.join('')||'<li><span>Aún no hay empleados</span></li>';
+}
+$('listaHoy').onclick=async ev=>{
+  const b=ev.target.closest('[data-foto]');if(!b)return;
+  const w=window.open('','_blank');
+  const {data}=await SB.storage.from('fotos').createSignedUrl(b.dataset.foto,120);
+  if(data&&w)w.location=data.signedUrl;else if(w)w.close();
+};
+$('recarga').onclick=cargarHoy;
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{msg('');mostrar(b.dataset.v)});
+
+async function cargarEquipo(){
+  const {data}=await SB.from('perfiles').select('nombre,rol,hora_entrada,tolerancia_min').eq('activo',true).order('nombre');
+  $('listaEq').innerHTML=(data||[]).map(p=>'<li><span>'+esc(p.nombre)+(p.rol==='dueno'?' (dueño)':'')+'</span><span>Entrada '+p.hora_entrada.slice(0,5)+'</span></li>').join('')||'<li><span>Sin empleados</span></li>';
+}
+$('formEq').onsubmit=async e=>{
+  e.preventDefault();msg('');
+  const email=$('eEmail').value.trim(),pass=$('ePass').value,nom=$('eNom').value.trim();
+  const he=$('eHora').value,tol=parseInt($('eTol').value,10);
+  const b=$('btnEq');b.disabled=true;
+  try{
+    const {data,error}=await SB2.auth.signUp({email,password:pass});
+    if(error)throw error;
+    if(!data.user)throw new Error('No se pudo crear el usuario');
+    const r=await SB.from('perfiles').insert({id:data.user.id,empresa_id:perfil.empresa_id,nombre:nom,rol:'empleado',hora_entrada:he,tolerancia_min:isNaN(tol)?10:tol});
+    if(r.error)throw r.error;
+    $('formEq').reset();
+    msg('Empleado agregado. Ya puede entrar con su correo y contraseña.',true);
+    await cargarEquipo();
+  }catch(err){msg(traducir(err.message))}
+  b.disabled=false;
+};
 
 function reloj(){
   const d=new Date();
