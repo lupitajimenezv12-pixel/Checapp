@@ -50,6 +50,9 @@ li small{color:var(--sub)}
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#fff;border-top:1px solid var(--linea);padding-bottom:env(safe-area-inset-bottom,0px)}
 nav button{flex:1;padding:14px 0;border:0;background:none;font-size:14px;color:var(--sub);cursor:pointer}
 nav button.on{color:var(--azul);font-weight:500}
+input[type=date]{width:100%;padding:12px;border:1px solid var(--linea);border-radius:10px;font-size:16px;background:#fff;color:var(--azul)}
+.btn.sec{background:#fff;color:var(--azul);border:1px solid var(--azul)}
+@media print{header,nav,.noimp,#msg{display:none!important}body{background:#fff}}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -113,12 +116,28 @@ nav button.on{color:var(--azul);font-weight:500}
   </form>
 </section>
 
+<section id="reportes" hidden>
+  <h1 class="noimp">Reportes</h1>
+  <div class="noimp">
+    <label>Desde<input id="rDesde" type="date"></label>
+    <label>Hasta<input id="rHasta" type="date"></label>
+    <button id="btnRep" class="btn" type="button">Ver reporte</button>
+  </div>
+  <h2 id="rTitulo"></h2>
+  <ul id="tablaRep"></ul>
+  <div id="accRep" class="noimp" hidden>
+    <button id="btnCsv" class="btn" type="button">Descargar para Excel</button>
+    <button id="btnPdf" class="btn sec" type="button">Imprimir o guardar PDF</button>
+  </div>
+</section>
+
 <div id="msg" hidden></div>
 </main>
 <nav id="nav" hidden>
   <button data-v="home" class="on">Registro</button>
   <button data-v="hoy">Hoy</button>
   <button data-v="equipo">Equipo</button>
+  <button data-v="reportes">Reportes</button>
 </nav>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -138,7 +157,7 @@ function traducir(t){
   return t;
 }
 function mostrar(v){
-  ['auth','home','hoy','equipo'].forEach(s=>$(s).hidden=s!==v);
+  ['auth','home','hoy','equipo','reportes'].forEach(s=>$(s).hidden=s!==v);
   $('salir').hidden=v==='auth';
   $('nav').hidden=v==='auth'||!(perfil&&perfil.rol==='dueno');
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
@@ -309,6 +328,48 @@ $('formEq').onsubmit=async e=>{
     await cargarEquipo();
   }catch(err){msg(traducir(err.message))}
   b.disabled=false;
+};
+
+/* ---------- Reportes ---------- */
+let filasRep=[];
+(()=>{
+  const f=x=>new Date(x.getTime()-x.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  const h=new Date(),d=new Date();
+  d.setDate(h.getDate()-((h.getDay()+6)%7));
+  $('rDesde').value=f(d);$('rHasta').value=f(h);
+})();
+
+async function cargarReporte(){
+  const d=$('rDesde').value,h=$('rHasta').value;
+  if(!d||!h){msg('Elige las dos fechas');return}
+  msg('Calculando…',true);
+  const ini=new Date(d+'T00:00:00'),fin=new Date(h+'T23:59:59');
+  const [p,r]=await Promise.all([
+    SB.from('perfiles').select('id,nombre').eq('activo',true).order('nombre'),
+    SB.from('registros').select('empleado_id,tipo,fecha_hora,es_retardo').gte('fecha_hora',ini.toISOString()).lte('fecha_hora',fin.toISOString()).order('fecha_hora').limit(5000)
+  ]);
+  if(p.error||r.error){msg('No se pudo cargar el reporte');return}
+  filasRep=(p.data||[]).map(u=>{
+    let ms=0,abierta=null,ret=0;const dias=new Set();
+    (r.data||[]).filter(x=>x.empleado_id===u.id).forEach(x=>{
+      const t=new Date(x.fecha_hora);
+      if(x.tipo==='entrada'){abierta=t;dias.add(t.toDateString());if(x.es_retardo)ret++}
+      else if(abierta){ms+=t-abierta;abierta=null}
+    });
+    return {nombre:u.nombre,dias:dias.size,horas:Math.round(ms/360000)/10,retardos:ret};
+  });
+  msg('');
+  $('rTitulo').textContent='Checapp · '+d+' al '+h;
+  $('tablaRep').innerHTML=filasRep.map(f=>'<li><span>'+esc(f.nombre)+'<br><small>'+f.dias+' días con registro</small></span><span>'+f.horas+' h · '+f.retardos+' retardos</span></li>').join('')||'<li><span>Sin empleados</span></li>';
+  $('accRep').hidden=false;
+}
+$('btnRep').onclick=cargarReporte;
+$('btnPdf').onclick=()=>window.print();
+$('btnCsv').onclick=()=>{
+  const l=['Empleado,Días con registro,Horas,Retardos'].concat(filasRep.map(f=>'"'+f.nombre.replace(/"/g,'""')+'",'+f.dias+','+f.horas+','+f.retardos));
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff'+l.join('\n')],{type:'text/csv;charset=utf-8'}));
+  a.download='reporte-checapp.csv';a.click();
 };
 
 function reloj(){
